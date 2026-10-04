@@ -1,0 +1,49 @@
+# The map of the south, README.md "Сборка". Manual run: Actions -> map -> Run workflow.
+name: map
+on:
+  schedule:
+    - cron: '0 22 * * 0'  # Sunday 22:00 UTC: the night to Monday, 01:00 in Moscow
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Опубликовать, даже если число дорог изменилось больше чем на 5 %'
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency: map
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osmium-tool
+          pip install osmium==4.3.1 numpy==2.5.3
+          osmium --version | head -1
+      - name: Build
+        run: ./build.sh "$RUNNER_TEMP/work"
+      - name: Check
+        run: PYTHONPATH=. python release.py "$RUNNER_TEMP/work" out ${{ inputs.force && '--force' || '' }}
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(python -c "import json; print(json.load(open('out/map.json'))['tag'])")
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "the map of $TAG is already published"
+            exit 0
+          fi
+          gh release create "$TAG" out/south.bin.xz out/map.json --latest --title "Карта от $TAG" --notes-file out/notes.md
+          cp out/stats.json stats.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add stats.json
+          git commit -m "stats: the map of $TAG"
+          git push
