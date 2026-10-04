@@ -1,10 +1,10 @@
 {
- "osm_time": "2026-09-29T00:36:19Z",
+ "osm_time": "2026-10-03T20:20:50Z",
  "counts": {
-  "rostov": 68738,
-  "krasnodar": 93575,
+  "rostov": 68737,
+  "krasnodar": 93632,
   "adygea": 9973,
-  "highways": 190608,
-  "edges": 453230
+  "highways": 190489,
+  "edges": 453181
  }
 }
