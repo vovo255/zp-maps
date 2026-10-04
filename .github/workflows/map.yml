@@ -27,6 +27,8 @@ jobs:
           sudo apt-get install -y osmium-tool
           pip install osmium==4.3.1 numpy==2.5.3
           osmium --version | head -1
+      - name: Tests
+        run: PYTHONPATH=. python -m unittest openpilot.selfdrive.zeropilot.tests.test_highways
       - name: Build
         run: ./build.sh "$RUNNER_TEMP/work"
       - name: Check
