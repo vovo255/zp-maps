@@ -48,7 +48,7 @@ HEADER = np.dtype([('magic', 'S4'), ('version', '<u4'), ('n_edge', '<u4'), ('n_p
 EDGE = np.dtype([('v_from', '<u4'), ('v_to', '<u4'), ('ref', '<u4'), ('name', '<u4'), ('cls', 'u1'), ('oneway', 'u1'),
                  ('pad', '<u2')])  # ref, name: offsets in strings
 AXES = ('along', 'gal', 'bear', 'edge_len', 'edge_off')  # the sections computed from the points
-AXES_CHUNK = 1 << 16  # edges of one part of axes_parts, about 40 MB of memory on a map of all streets
+AXES_CHUNK = 1 << 16  # edges of one part of axes_parts; the phone completes the map of Russia with about 110 MB
 
 
 def cell_key(lat_e7, lon_e7):
