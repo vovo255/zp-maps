@@ -3,10 +3,12 @@ import math
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
-from openpilot.selfdrive.zeropilot.highways import Highways
+from openpilot.selfdrive.zeropilot import highways
+from openpilot.selfdrive.zeropilot.highways import AXES, HEADER, Highways, axes, axes_parts, complete, core_size
 from openpilot.selfdrive.zeropilot.speedcam.geo import EARTH_RADIUS, distance
 from openpilot.tools.zp.osm_highways import Way, build, combine, oneway, wanted, write
 
@@ -139,6 +141,41 @@ class TestHighways(unittest.TestCase):
     np.testing.assert_array_equal(hw.edge_off, np.r_[0, np.cumsum(hw.edge_len[:-1] + 1.0)])
     self.assertAlmostEqual(hw.bear[hw.edge_first[0]], 90, delta=0.01)
     self.assertAlmostEqual(hw.bear[hw.edge_first[2]], 0, delta=0.01)
+
+  @staticmethod
+  def grid():
+    # 4 roads to the east and 4 to the north through the same 16 nodes: 24 edges
+    ways = []
+    for i in range(4):
+      ways.append(way([10 * i + j for j in range(4)], [(45 + 0.01 * i, 39 + 0.01 * j) for j in range(4)], direction=0))
+      ways.append(way([10 * j + i for j in range(4)], [(45 + 0.01 * j, 39 + 0.01 * i) for j in range(4)], direction=0))
+    return ways
+
+  def test_axes_in_parts(self):
+    # the sums run on from one part to the next: parts of any size give the axes of the whole map
+    parts = build(self.grid())
+    self.assertEqual(len(parts['edges']), 24)
+    whole = axes(parts['points'], parts['edge_first'])
+    for chunk in (1, 5, 24, 100):
+      got = list(axes_parts(parts['points'], parts['edge_first'], chunk))
+      self.assertEqual([e0 for e0, _, _ in got], list(range(0, 24, chunk)))
+      self.assertEqual([p0 for _, p0, _ in got], list(parts['edge_first'][0:24:chunk]))
+      for name in AXES:
+        np.testing.assert_array_equal(np.concatenate([p[name] for _, _, p in got]), whole[name], f'{name}, {chunk} edges')
+
+  def test_complete_in_parts(self):
+    # the phone completes the published map part by part, the result is the file of the builder
+    with tempfile.TemporaryDirectory() as tmp:
+      full, done = os.path.join(tmp, 'full.bin'), os.path.join(tmp, 'done.bin')
+      write(full, build(self.grid()), '2026-09-29T20:21:02Z')
+      with open(full, 'rb') as f:
+        data = f.read()
+      with open(done, 'wb') as f:
+        f.write(data[:core_size(np.frombuffer(data, HEADER, 1)[0])])
+      with mock.patch.object(highways, 'AXES_CHUNK', 5):
+        complete(done)
+      with open(done, 'rb') as f:
+        self.assertEqual(f.read(), data)
 
   def test_sections_map_the_file(self):
     hw = load([self.EAST, self.NORTH])

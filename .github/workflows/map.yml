@@ -1,4 +1,4 @@
-# The map of the south, README.md "Сборка". Manual run: Actions -> map -> Run workflow.
+# The map of Russia, README.md "Сборка". Manual run: Actions -> map -> Run workflow.
 name: map
 on:
   schedule:
@@ -9,6 +9,10 @@ on:
         description: 'Опубликовать, даже если число дорог изменилось больше чем на 5 %'
         type: boolean
         default: false
+      publish:
+        description: 'Опубликовать релиз; без отметки только сборка и проверки'
+        type: boolean
+        default: true
 permissions:
   contents: write
 concurrency: map
@@ -34,15 +38,17 @@ jobs:
       - name: Check
         run: PYTHONPATH=. python release.py "$RUNNER_TEMP/work" out ${{ inputs.force && '--force' || '' }}
       - name: Publish
+        if: github.event_name == 'schedule' || inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG=$(python -c "import json; print(json.load(open('out/map.json'))['tag'])")
+          FILE=$(python -c "import json; print(json.load(open('out/map.json'))['file'])")
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "the map of $TAG is already published"
             exit 0
           fi
-          gh release create "$TAG" out/south.bin.xz out/map.json --latest --title "Карта от $TAG" --notes-file out/notes.md
+          gh release create "$TAG" "out/$FILE" out/map.json --latest --title "Карта от $TAG" --notes-file out/notes.md
           cp out/stats.json stats.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

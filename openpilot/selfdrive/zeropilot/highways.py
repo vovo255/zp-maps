@@ -1,6 +1,7 @@
 """The highway map: the OSM motorway and trunk roads of Russia with their links and the primary roads with a federal
 number (the old M-4 through Aksay, parts of A-160), as a graph in one file. Inside the street areas given to the builder
-(Rostov and around it) the file also has every drivable street.
+(Rostov and around it) the file also has every drivable street. The map of the zp-maps repo has every drivable street of
+Russia (osm_highways.py --all-streets).
 
 tools/zp/osm_highways.py builds the file on the Mac, docs/speedcam/highways.md tells how. Little endian, in this order:
   header      HEADER
@@ -47,6 +48,7 @@ HEADER = np.dtype([('magic', 'S4'), ('version', '<u4'), ('n_edge', '<u4'), ('n_p
 EDGE = np.dtype([('v_from', '<u4'), ('v_to', '<u4'), ('ref', '<u4'), ('name', '<u4'), ('cls', 'u1'), ('oneway', 'u1'),
                  ('pad', '<u2')])  # ref, name: offsets in strings
 AXES = ('along', 'gal', 'bear', 'edge_len', 'edge_off')  # the sections computed from the points
+AXES_CHUNK = 1 << 16  # edges of one part of axes_parts, about 40 MB of memory on a map of all streets
 
 
 def cell_key(lat_e7, lon_e7):
@@ -68,22 +70,40 @@ def bearing(lat1, lon1, lat2, lon2):
   return np.degrees(np.arctan2(np.sin(dl) * np.cos(p2), np.cos(p1) * np.sin(p2) - np.sin(p1) * np.cos(p2) * np.cos(dl))) % 360
 
 
+def axes_parts(points, edge_first, chunk: int = AXES_CHUNK):
+  """The AXES sections of the file from its points and edge_first, chunk edges at a time, so that the memory does not
+  grow with the map: yields the first edge, the first point and the sections of these edges. The sums run on from one
+  part to the next, any chunk gives the same numbers. The axes of position.Graph: m along the edge, every edge on its own
+  stretch of one axis, the heading of the segments."""
+  first = np.asarray(edge_first, np.int64)
+  n_point = len(points) // 2
+  sum_along, off = 0., 0.
+  for e0 in range(0, len(first) - 1, chunk):
+    e1 = min(e0 + chunk, len(first) - 1)
+    p0, p1 = int(first[e0]), int(first[e1])
+    n, q1 = p1 - p0, min(p1 + 1, n_point)  # the heading of the last point looks at the next one
+    lat, lon = points[2 * p0:2 * q1:2] * 1e-7, points[2 * p0 + 1:2 * q1:2] * 1e-7
+    f = first[e0:e1 + 1] - p0
+    step = np.zeros(n)
+    step[1:] = distance(lat[:n - 1], lon[:n - 1], lat[1:n], lon[1:n])
+    step[f[:-1]] = 0
+    along = np.cumsum(np.r_[sum_along, step])[1:]
+    sum_along = along[-1]
+    along -= np.repeat(along[f[:-1]], np.diff(f))
+    edge_len = along[f[1:] - 1]
+    edge_off = np.cumsum(np.r_[off, edge_len + 1.0])
+    off = edge_off[-1]
+    edge_off = edge_off[:-1]
+    bear = np.zeros(n)
+    bear[:q1 - p0 - 1] = bearing(lat[:q1 - p0 - 1], lon[:q1 - p0 - 1], lat[1:q1 - p0], lon[1:q1 - p0])
+    yield e0, p0, {'along': along, 'gal': along + np.repeat(edge_off, np.diff(f)), 'bear': bear, 'edge_len': edge_len,
+                   'edge_off': edge_off}
+
+
 def axes(points, edge_first) -> dict:
-  """The AXES sections of the file from its points and edge_first: the axes of position.Graph, m along the edge, every
-  edge on its own stretch of one axis, the heading of the segments."""
-  lat, lon = points[0::2] * 1e-7, points[1::2] * 1e-7
-  first = edge_first
-  step = np.zeros(len(lat))
-  step[1:] = distance(lat[:-1], lon[:-1], lat[1:], lon[1:])
-  step[first[:-1]] = 0
-  along = np.cumsum(step)
-  along -= np.repeat(along[first[:-1]], np.diff(first))
-  edge_len = along[first[1:] - 1]
-  edge_off = np.r_[0, np.cumsum(edge_len[:-1] + 1.0)]
-  gal = along + np.repeat(edge_off, np.diff(first))
-  bear = np.zeros(len(lat))
-  bear[:-1] = bearing(lat[:-1], lon[:-1], lat[1:], lon[1:])
-  return {'along': along, 'gal': gal, 'bear': bear, 'edge_len': edge_len, 'edge_off': edge_off}
+  """The AXES sections of the file from its points and edge_first."""
+  parts = [p for _, _, p in axes_parts(points, edge_first)]
+  return {name: np.concatenate([p[name] for p in parts]) if parts else np.zeros(0) for name in AXES}
 
 
 def core_size(h) -> int:
@@ -96,26 +116,30 @@ def core_size(h) -> int:
   return at
 
 
-def complete(core_path: str, path: str) -> None:
-  """Writes the map file from a published map without the AXES sections."""
-  core = np.memmap(core_path, dtype=np.uint8, mode='r')
+def complete(path: str) -> None:
+  """Adds the AXES sections to a published map, a file without them, in place: the disk holds the map once."""
+  core = np.memmap(path, dtype=np.uint8, mode='r')
   h = np.frombuffer(core, HEADER, 1)[0]
   if h['magic'] != MAGIC or h['version'] != VERSION:
-    raise ValueError(f'{core_path}: not a highway map of version {VERSION}')
+    raise ValueError(f'{path}: not a highway map of version {VERSION}')
   if core_size(h) != len(core):
-    raise ValueError(f'{core_path}: {len(core)} bytes, the header says {core_size(h)}')
+    raise ValueError(f'{path}: {len(core)} bytes, the header says {core_size(h)}')
   parts, at = {}, HEADER.itemsize
   for name, dtype, n in sections(h):
     if name in AXES:
       break
     parts[name] = np.frombuffer(core, dtype, int(n), at)
     at += parts[name].nbytes
-  computed = axes(parts['points'], parts['edge_first'])
-  with open(path + '.tmp', 'wb') as f:
-    f.write(core)
-    for name in AXES:
-      f.write(np.ascontiguousarray(computed[name], '<f8').tobytes())
-  os.replace(path + '.tmp', path)
+  start = {}  # where each AXES section begins in the file
+  for name, dtype, n in sections(h):
+    if name in AXES:
+      start[name] = at
+      at += np.dtype(dtype).itemsize * int(n)
+  with open(path, 'r+b') as f:
+    for e0, p0, computed in axes_parts(parts['points'], parts['edge_first'], AXES_CHUNK):
+      for name in AXES:
+        f.seek(start[name] + 8 * (e0 if name.startswith('edge') else p0))
+        f.write(np.ascontiguousarray(computed[name], '<f8').tobytes())
 
 
 class Degrees:
