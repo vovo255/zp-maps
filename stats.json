@@ -1,10 +1,10 @@
 {
- "osm_time": "2026-10-11T20:21:06Z",
+ "osm_time": "2026-10-18T20:25:06Z",
  "counts": {
-  "highways": 292545,
-  "secondary": 288482,
-  "tertiary": 567478,
-  "unclassified": 826978,
-  "streets": 3019346
+  "highways": 292174,
+  "secondary": 289069,
+  "tertiary": 567675,
+  "unclassified": 826904,
+  "streets": 3020290
  }
 }
